@@ -6,16 +6,22 @@ import functools
 import gc
 from calib import get_calib_dataset
 from helpers import get_blocks, move_device, append_str_prefix, get_op_name, get_named_linears
-from scale import auto_scale_block
+from scale import auto_scale_block, apply_scale
 from clip import auto_clip_block, apply_clip
 
-def find_s_and_salient_weights(model, enc, w_bit, q_config, n_samples=512, seqlen=512, mse_range=True, auto_scale=True, calib_data="pileval"):
+
+@torch.no_grad()
+def find_s_and_salient_weights(model, enc, q_config, s_val=None):
+    w_bit = 4
+    n_samples = 128
+    seqlen = 512
     if "bigcode" in str(model.__class__).lower():
         # otherwise attention_mask will always be on cpu.
         model.transformer.bias = model.transformer.bias.to("cuda")
 
     layers = get_blocks(model)
 
+    calib_data="pileval"
     samples = get_calib_dataset(
         data=calib_data, tokenizer=enc, n_samples=n_samples, block_size=seqlen
     )
@@ -99,40 +105,37 @@ def find_s_and_salient_weights(model, enc, w_bit, q_config, n_samples=512, seqle
         gc.collect()
         torch.cuda.empty_cache()
 
-        if (
-            auto_scale
-        ):  # if it applies, we should also modify the input_feat with scales
-            scales_list = auto_scale_block(
-                layer,
-                layer_kwargs,
-                w_bit=w_bit,
-                q_config=q_config,
-                input_feat=input_feat,
-            )
-            # apply_scale(layer, scales_list, input_feat_dict=input_feat)
-            apply_scale(layers[i], scales_list, input_feat_dict=input_feat)
-            # append prefix to make names global
-            awq_results["scale"] += append_str_prefix(
-                scales_list, get_op_name(model, layer) + "."
-            )
+        scales_list = auto_scale_block(
+            layer,
+            layer_kwargs,
+            w_bit=w_bit,
+            q_config=q_config,
+            input_feat=input_feat,
+            s_val=s_val
+        )
+        # apply_scale(layer, scales_list, input_feat_dict=input_feat)
+        apply_scale(layers[i], scales_list, input_feat_dict=input_feat)
+        # append prefix to make names global
+        awq_results["scale"] += append_str_prefix(
+            scales_list, get_op_name(model, layer) + "."
+        )
 
         # Clear GPU memory
         del scales_list
         gc.collect()
         torch.cuda.empty_cache()
 
-        if mse_range:
-            clip_list = auto_clip_block(
-                layer,
-                w_bit=w_bit,
-                q_config=q_config,
-                input_feat=input_feat,
-            )
-            apply_clip(layer, clip_list)
-            # append prefix to make names global
-            awq_results["clip"] += append_str_prefix(
-                clip_list, get_op_name(model, layer) + "."
-            )
+        clip_list = auto_clip_block(
+            layer,
+            w_bit=w_bit,
+            q_config=q_config,
+            input_feat=input_feat,
+        )
+        apply_clip(layer, clip_list)
+        # append prefix to make names global
+        awq_results["clip"] += append_str_prefix(
+            clip_list, get_op_name(model, layer) + "."
+        )
 
         layer = layer.cpu()
         del layer
