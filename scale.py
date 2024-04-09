@@ -1,7 +1,9 @@
 import torch
+from torch import nn
 import gc
-from helpers import get_op_name
+from helpers import get_op_name, get_op_by_name
 from quant import pseudo_quantize_tensor
+from clip import apply_clip
 
 @torch.no_grad()
 def get_act_scale(x):
@@ -131,3 +133,68 @@ def auto_scale_block(module, module_kwargs, w_bit, q_config, input_feat):
     torch.cuda.empty_cache()
 
     return scales_list
+
+# apply_awq
+def apply_awq_scaling(model, awq_results):
+    apply_scale(model, awq_results["scale"])
+    apply_clip(model, awq_results["clip"])
+
+def apply_scale(module, scales_list, input_feat_dict=None):
+    for prev_op_name, layer_names, scales in scales_list:
+        prev_op = get_op_by_name(module, prev_op_name)
+        layers = [get_op_by_name(module, name) for name in layer_names]
+        prev_op.cuda()
+        for layer in layers:
+            layer.cuda()
+        scales.cuda()
+        if isinstance(prev_op, nn.Linear):
+            assert len(layers) == 1
+            scale_fc_fc(prev_op, layers[0], scales)
+        elif isinstance(prev_op, nn.LayerNorm):
+            scale_ln_fcs(prev_op, layers, scales)
+
+        if input_feat_dict is not None:
+            for layer_name in layer_names:
+                inp = input_feat_dict[layer_name]
+                inp.div_(scales.view(1, -1).to(inp.device))
+
+@torch.no_grad()
+def scale_fc_fc(fc1, fc2, scales):
+    # assert isinstance(fc1, nn.Linear)
+    # assert isinstance(fc2, nn.Linear)
+    # assert fc1.out_features == fc2.in_features
+
+    scales = scales.to(fc1.weight.device)
+    fc1.weight[-scales.size(0) :].div_(scales.view(-1, 1))
+    if fc1.bias is not None:
+        fc1.bias.div_(scales.view(-1))
+
+    fc2.weight.mul_(scales.view(1, -1))
+
+    # for p in fc1.parameters():
+    #     assert torch.isnan(p).sum() == 0
+    # for p in fc2.parameters():
+    #     assert torch.isnan(p).sum() == 0
+
+@torch.no_grad()
+def scale_ln_fcs(ln, fcs, scales):
+    if not isinstance(fcs, list):
+        fcs = [fcs]
+
+    scales = scales.to(ln.weight.device)
+
+    ln.weight.div_(scales)
+    if hasattr(ln, "bias") and ln.bias is not None:
+        ln.bias.div_(scales)
+
+    for fc in fcs:
+        fc.weight.mul_(scales.view(1, -1))
+
+    for p in ln.parameters():
+        assert torch.isnan(p).sum() == 0
+    for fc in fcs:
+        for p in fc.parameters():
+            assert torch.isnan(p).sum() == 0
+
+# Feels optional, maybe?
+# def apply_clip(model, clip_list):

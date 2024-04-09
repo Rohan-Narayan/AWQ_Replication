@@ -6,7 +6,7 @@ import functools
 import gc
 from calib import get_calib_dataset
 from helpers import get_blocks, move_device, append_str_prefix, get_op_name, get_named_linears
-from scale import auto_scale_block, apply_scale
+from scale import auto_scale_block
 from clip import auto_clip_block, apply_clip
 
 def find_s_and_salient_weights(model, enc, w_bit, q_config, n_samples=512, seqlen=512, mse_range=True, auto_scale=True, calib_data="pileval"):
