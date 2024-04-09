@@ -1,0 +1,1 @@
+# Vanilla rtn, just quantize each tensor without scales (should just be modification to quantize function)

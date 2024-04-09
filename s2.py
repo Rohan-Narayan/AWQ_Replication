@@ -1,0 +1,1 @@
+# Make all scales in found scale list = 2
