@@ -13,7 +13,7 @@ def get_act_scale(x):
 def auto_scale_block(module, module_kwargs, w_bit, q_config, input_feat, s_val=None):
     # TODO - complete
     if w_bit is not None:
-        
+
         def w_quantize_func(p):
             return quantize_tensor(
                 p,
@@ -29,25 +29,27 @@ def auto_scale_block(module, module_kwargs, w_bit, q_config, input_feat, s_val=N
         x = x.to(next(block.parameters()).device)
         if s_val is not None:
             scales = torch.full((x.shape[-1],), 2, dtype=x.dtype, device=x.device)
+            return scales.view(-1).detach()
 
         with torch.no_grad():
             org_out = block(x, **kwargs)
             if isinstance(org_out, tuple):
                 org_out = org_out[0]
 
+        # Gets average activations across calibration set
         x_max = get_act_scale(x)
 
         best_error = float("inf")
-        best_ratio = -1
+        # best_ratio = -1
         best_scales = None
 
         n_grid = 20
-        history = []
+        # history = []
 
         org_sd = {k: v.cpu() for k, v in block.state_dict().items()}
-        for ratio in range(n_grid):
-            ratio = ratio * 1 / n_grid
-            scales = x_max.pow(ratio).clamp(min=1e-4).view(-1)
+        for alpha in range(n_grid):
+            alpha = alpha * 1 / n_grid
+            scales = x_max.pow(alpha).clamp(min=1e-4).view(-1)
             scales = scales / (scales.max() * scales.min()).sqrt()
             for fc in linears2scale:
                 fc.weight.mul_(scales.view(1, -1).to(fc.weight.device))
@@ -59,16 +61,16 @@ def auto_scale_block(module, module_kwargs, w_bit, q_config, input_feat, s_val=N
             loss = (
                 (org_out - out).float().pow(2).mean().item()
             )  # float prevents overflow
-            history.append(loss)
+            # history.append(loss)
             is_best = loss < best_error
             if is_best:
                 best_error = loss
-                best_ratio = ratio
+                # best_ratio = ratio
                 best_scales = scales
             block.load_state_dict(org_sd)
-        if best_ratio == -1:
-            print(history)
-            raise Exception
+        # if best_ratio == -1:
+        #     print(history)
+        #     raise Exception
         # print(best_ratio)
         best_scales = best_scales.view(-1)
 

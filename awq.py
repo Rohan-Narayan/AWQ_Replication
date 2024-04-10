@@ -6,18 +6,28 @@ from quant import quantize
 from perplexity import compute_perplexity
 from scale import apply_awq_scaling
 import gc
+import argparse
 
+parser = argparse.ArgumentParser(description='Process some integers.')
+parser.add_argument('--s_val', type=int, default=None, help='Pass in a fixed s_val, avoid the search. Default behavior is searching for s.')
+parser.add_argument('--test', action='store_true', help='Run the script in test mode.')
 
-models = ["opt-1.3b", "opt-2.7b", "opt-6.7b", "opt-13b"]
+args = parser.parse_args()
 
-# Exceeds A100 GPU RAM when scaling and quantizing
-# models.append("opt-30b")
+if args.test:
+    models = ["opt-125m"]
+else:
+    models = ["opt-1.3b", "opt-2.7b", "opt-6.7b", "opt-13b"]
+    # Exceeds A100 GPU RAM when scaling and quantizing
+    # models.append("opt-30b")
+
 q_config = {
             "zero_point": True,
             "q_group_size": 128, 
         }
 kwargs = {"torch_dtype": torch.float16, "low_cpu_mem_usage": True}
 num_bits = 3
+s_val = args.number
 
 if __name__ == "__main__":
     testset = load_dataset("wikitext", "wikitext-2-raw-v1", split="test")
@@ -40,7 +50,8 @@ if __name__ == "__main__":
 
         s_and_salient_weights = find_s_and_salient_weights(model,
                         enc,
-                        q_config=q_config)
+                        q_config=q_config,
+                        s_val=s_val)
 
         # Reset model
         model = AutoModelForCausalLM.from_pretrained(
