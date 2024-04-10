@@ -6,7 +6,6 @@ from awq_layer import AWQLinear
 import gc
 
 
-
 def quantize(model, num_bits, q_config):
     # TODO - complete
     layers = get_blocks(model)

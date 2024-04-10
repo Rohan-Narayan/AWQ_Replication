@@ -13,6 +13,7 @@ def get_act_scale(x):
 def auto_scale_block(module, module_kwargs, w_bit, q_config, input_feat, s_val=None):
     # TODO - complete
     if w_bit is not None:
+        
         def w_quantize_func(p):
             return quantize_tensor(
                 p,
