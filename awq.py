@@ -42,6 +42,12 @@ if __name__ == "__main__":
                         enc,
                         q_config=q_config)
 
+        # Reset model
+        model = AutoModelForCausalLM.from_pretrained(
+                        model_path, config=config, trust_remote_code=True, **kwargs
+                    )
+        model.eval()
+
         apply_awq_scaling(model, s_and_salient_weights)
         quantize(model, num_bits=num_bits, q_config=q_config)
 
@@ -57,4 +63,4 @@ if __name__ == "__main__":
 
     print("Summary of AWQ Perplexities")
     for k,v in perplexities.items():
-        print(f"Perplexity for {k} with AWQ to {num_bits}: {v}")
+        print(f"Perplexity for {k} with AWQ to {num_bits} bits: {v}")

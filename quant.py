@@ -12,7 +12,7 @@ def quantize(model, num_bits, q_config):
     layers = get_blocks(model)
     for i in tqdm(
         range(len(layers)),
-        desc="real weight quantization...",
+        desc="Quantizing model",
     ):
         layer = layers[i]
         named_linears = get_named_linears(layer)

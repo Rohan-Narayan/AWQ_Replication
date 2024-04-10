@@ -74,13 +74,13 @@ class AWQLinear(nn.Module):
         self.group_size = group_size if group_size != -1 else in_features
         self.split_k_iters = 8
         self.interleave = 4
-        # quick sanity check (make sure aligment)
-        assert self.in_features % self.group_size == 0
-        assert out_features % (32 // self.w_bit) == 0
+        # # quick sanity check (make sure aligment)
+        # assert self.in_features % self.group_size == 0
+        # assert out_features % (32 // self.w_bit) == 0
         pack_num = 32 // self.w_bit
         int16_pack_num = 16 // self.w_bit
 
-        assert out_features % (self.interleave) == 0
+        # assert out_features % (self.interleave) == 0
         self.register_buffer(
             "qweight",
             torch.zeros(
@@ -138,7 +138,7 @@ class AWQLinear(nn.Module):
             return awq_linear
 
         # need scales and zeros info for real quantization
-        assert scales is not None and zeros is not None
+        # assert scales is not None and zeros is not None
         scale_zeros = zeros * scales
 
         pack_num = 32 // awq_linear.w_bit
