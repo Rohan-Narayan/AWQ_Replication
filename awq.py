@@ -7,10 +7,11 @@ from perplexity import compute_perplexity
 from scale import apply_awq_scaling
 
 
-models = ["facebook/opt-1.3b", "facebook/opt-2.7b", "facebook/opt-6.7b", "facebook/opt-13b", "facebook/opt-30b"]
+models = ["opt-1.3b", "opt-2.7b", "opt-6.7b", "opt-13b", "opt-30b"]
 if __name__ == "__main__":
-    for model_path in models:
-        print("Working on " + model_path + "...")
+    for model_name in models:
+        model_path = "facebook/" + model_name
+        print("Working on " + model_name + "...")
         config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
         enc = AutoTokenizer.from_pretrained(
                         model_path, use_fast=False, trust_remote_code=True
@@ -30,11 +31,12 @@ if __name__ == "__main__":
                         enc,
                         q_config=q_config)
         
-        torch.save(awq_results, model_path + "_awq.pt")
+        torch.save(awq_results, model_name + "_awq.pt")
 
     testset = load_dataset("wikitext", "wikitext-2-raw-v1", split="test")
-    perplexities = []
-    for model_path in models:
+    perplexities = {}
+    for model_name in models:
+        model_path = "facebook/" + model_name
         config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
         enc = AutoTokenizer.from_pretrained(
                         model_path, use_fast=False, trust_remote_code=True
@@ -51,6 +53,10 @@ if __name__ == "__main__":
 
         model.to('cuda')
         perplexity = compute_perplexity(model, testenc, 'cuda')
-        perplexities.append(perplexity)
-        print()
-        print(perplexity.item())
+        perplexities[model_name] = perplexity.item()
+        # print()
+        # print(perplexity.item())
+
+    print("Full AWQ Perplexities")
+    for k,v in perplexities:
+        print("Perplexity for k:", v)
