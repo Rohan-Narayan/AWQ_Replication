@@ -15,9 +15,9 @@ def find_s_and_salient_weights(model, enc, q_config, s_val=None):
     w_bit = 4
     n_samples = 128
     seqlen = 512
-    if "bigcode" in str(model.__class__).lower():
-        # otherwise attention_mask will always be on cpu.
-        model.transformer.bias = model.transformer.bias.to("cuda")
+    # if "bigcode" in str(model.__class__).lower():
+    #     # otherwise attention_mask will always be on cpu.
+    #     model.transformer.bias = model.transformer.bias.to("cuda")
 
     layers = get_blocks(model)
 
@@ -49,10 +49,7 @@ def find_s_and_salient_weights(model, enc, q_config, s_val=None):
     # patch layer 0 to catch input and kwargs
     layers[0] = Catcher(layers[0])
     try:
-        next_dev = next(model.parameters()).device
-        print(next_dev)
-        model(samples.to(next_dev))
-        del next_dev
+        model(samples.to(next(model.parameters()).device))
     except ValueError:  # work with early exit
         pass
     del samples

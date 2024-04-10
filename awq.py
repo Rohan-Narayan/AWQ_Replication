@@ -28,10 +28,7 @@ if __name__ == "__main__":
 
         awq_results = find_s_and_salient_weights(model,
                         enc,
-                        w_bit=4,
-                        q_config=q_config,
-                        n_samples=128,
-                        seqlen=512,)
+                        q_config=q_config)
         torch.save(awq_results, model_path + "_awq.pt")
 
     testset = load_dataset("wikitext", "wikitext-2-raw-v1", split="test")

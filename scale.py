@@ -10,7 +10,7 @@ def get_act_scale(x):
     return x.abs().view(-1, x.shape[-1]).mean(0)
 
 @torch.no_grad()
-def auto_scale_block(module, module_kwargs, w_bit, q_config, input_feat):
+def auto_scale_block(module, module_kwargs, w_bit, q_config, input_feat, s_val=None):
     # TODO - complete
     if w_bit is not None:
         def w_quantize_func(p):
@@ -27,9 +27,12 @@ def auto_scale_block(module, module_kwargs, w_bit, q_config, input_feat):
     if "use_cache" in module_kwargs:
         module_kwargs.pop("use_cache")
 
-    def _search_module_scale(block, linears2scale: list, x, kwargs={}):
+    def _search_module_scale(block, linears2scale: list, x, kwargs={}, s_val=None):
         # TODO - complete
         x = x.to(next(block.parameters()).device)
+        if s_val is not None:
+            scales = torch.full((x.shape[-1],), 2, dtype=x.dtype, device=x.device)
+            
         with torch.no_grad():
             org_out = block(x, **kwargs)
             if isinstance(org_out, tuple):
@@ -75,12 +78,12 @@ def auto_scale_block(module, module_kwargs, w_bit, q_config, input_feat):
         assert torch.isnan(best_scales).sum() == 0, best_scales
         return best_scales.detach()
 
-    def _auto_get_scale(prev_op, layers, inp, module2inspect=None, kwargs={}):
+    def _auto_get_scale(prev_op, layers, inp, module2inspect=None, kwargs={}, s_val=None):
         # TODO - complete
         if module2inspect is None:
             # assert len(layers) == 1
             module2inspect = layers[0]
-        scales = _search_module_scale(module2inspect, layers, inp, kwargs)
+        scales = _search_module_scale(module2inspect, layers, inp, kwargs, s_val)
         scales = scales.detach().cpu()
         # prev_op_name, [layer_name], scale
         return (
@@ -102,6 +105,7 @@ def auto_scale_block(module, module_kwargs, w_bit, q_config, input_feat):
                 inp=input_feat["self_attn.q_proj"],
                 module2inspect=module.self_attn,
                 kwargs=module_kwargs,
+                s_val=s_val
             )
         )
         # attn out
