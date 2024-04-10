@@ -2,7 +2,7 @@ import torch
 from torch import nn
 import gc
 from helpers import get_op_by_name
-from quant import pseudo_quantize_tensor
+from quant import quantize_tensor
 
 
 # weight quantization
@@ -41,7 +41,7 @@ def auto_clip_layer(
             max_val = org_max_val * (1 - i_s / n_grid)
             min_val = -max_val
             cur_w = torch.clamp(w, min_val, max_val)
-            q_w = pseudo_quantize_tensor(cur_w, n_bit=n_bit, **q_config)
+            q_w = quantize_tensor(cur_w, n_bit=n_bit, **q_config)
             cur_out = (input_feat * q_w).sum(dim=-1)
 
             # co, 1, n_group, 1

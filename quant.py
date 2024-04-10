@@ -83,7 +83,7 @@ def quantize(model, w_bit, q_config):
 
         for name, module in named_linears.items():
             module.cuda()
-            module.weight.data, scales, zeros = pseudo_quantize_tensor(
+            module.weight.data, scales, zeros = quantize_tensor(
                 module.weight.data, n_bit=w_bit, get_scale_zp=True, **q_config
             )
             q_linear = WQLinear.from_linear(
@@ -98,7 +98,7 @@ def quantize(model, w_bit, q_config):
     torch.cuda.empty_cache()
     gc.collect()
 
-def pseudo_quantize_tensor(
+def quantize_tensor(
     w, n_bit=8, zero_point=True, q_group_size=-1, inplace=False, get_scale_zp=False
 ):
     org_w_shape = w.shape
@@ -131,18 +131,3 @@ def pseudo_quantize_tensor(
     else:
         return w
     
-@torch.no_grad()
-def pseudo_quantize_model_weight(
-    model,
-    w_bit,
-    q_config,
-):
-    layers = get_blocks(model)
-    for i in tqdm(range(len(layers)), desc="pseudo weight quantization..."):
-        named_linears = get_named_linears(layers[i])
-        for _, m in named_linears.items():
-            m.cuda()
-            m.weight.data = pseudo_quantize_tensor(
-                m.weight.data, n_bit=w_bit, **q_config
-            )
-            m.cpu()

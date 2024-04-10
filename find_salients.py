@@ -12,7 +12,7 @@ from clip import auto_clip_block, apply_clip
 
 @torch.no_grad()
 def find_s_and_salient_weights(model, enc, q_config, s_val=None):
-    w_bit = 4
+    num_bits = 3
     n_samples = 128
     seqlen = 512
     # if "bigcode" in str(model.__class__).lower():
@@ -63,7 +63,7 @@ def find_s_and_salient_weights(model, enc, q_config, s_val=None):
 
     awq_results = {
         "scale": [],
-        "clip": [],
+        # "clip": [],
     }
     torch.cuda.empty_cache()
 
@@ -105,7 +105,7 @@ def find_s_and_salient_weights(model, enc, q_config, s_val=None):
         scales_list = auto_scale_block(
             layer,
             layer_kwargs,
-            w_bit=w_bit,
+            w_bit=num_bits,
             q_config=q_config,
             input_feat=input_feat,
             s_val=s_val
@@ -122,26 +122,24 @@ def find_s_and_salient_weights(model, enc, q_config, s_val=None):
         gc.collect()
         torch.cuda.empty_cache()
 
-        clip_list = auto_clip_block(
-            layer,
-            w_bit=w_bit,
-            q_config=q_config,
-            input_feat=input_feat,
-        )
-        apply_clip(layer, clip_list)
-        # append prefix to make names global
-        awq_results["clip"] += append_str_prefix(
-            clip_list, get_op_name(model, layer) + "."
-        )
+        # clip_list = auto_clip_block(
+        #     layer,
+        #     w_bit=num_bits,
+        #     q_config=q_config,
+        #     input_feat=input_feat,
+        # )
+        # apply_clip(layer, clip_list)
+        # # append prefix to make names global
+        # awq_results["clip"] += append_str_prefix(
+        #     clip_list, get_op_name(model, layer) + "."
+        # )
 
         layer = layer.cpu()
         del layer
-        # Haotian: check activation replacement
         del input_feat
-        del clip_list
+        # del clip_list
         del named_linears
         gc.collect()
         torch.cuda.empty_cache()
 
     return awq_results
-    # TODO

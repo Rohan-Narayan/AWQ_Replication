@@ -5,9 +5,15 @@ from find_salients import find_s_and_salient_weights
 from quant import quantize
 from perplexity import compute_perplexity
 from scale import apply_awq_scaling
+import gc
 
 
 models = ["opt-1.3b", "opt-2.7b", "opt-6.7b", "opt-13b", "opt-30b"]
+q_config = {
+            "zero_point": True,
+            "q_group_size": 128, 
+        }
+kwargs = {"torch_dtype": torch.float16, "low_cpu_mem_usage": True}
 if __name__ == "__main__":
     for model_name in models:
         model_path = "facebook/" + model_name
@@ -17,15 +23,10 @@ if __name__ == "__main__":
                         model_path, use_fast=False, trust_remote_code=True
                     )
         
-        kwargs = {"torch_dtype": torch.float16, "low_cpu_mem_usage": True}
         model = AutoModelForCausalLM.from_pretrained(
                         model_path, config=config, trust_remote_code=True, **kwargs
                     )
         model.eval()
-        q_config = {
-            "zero_point": True,
-            "q_group_size": 128, 
-        }
 
         awq_results = find_s_and_salient_weights(model,
                         enc,
@@ -36,6 +37,10 @@ if __name__ == "__main__":
     testset = load_dataset("wikitext", "wikitext-2-raw-v1", split="test")
     perplexities = {}
     for model_name in models:
+        gc.collect()
+        torch.cuda.empty_cache()
+        results_path = model_name + "_awq.pt"
+        awq_results = torch.load(results_path, map_location="cpu")
         model_path = "facebook/" + model_name
         config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
         enc = AutoTokenizer.from_pretrained(
