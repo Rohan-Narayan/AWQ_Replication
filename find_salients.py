@@ -63,7 +63,7 @@ def find_s_and_salient_weights(model, enc, q_config, s_val=None):
 
     awq_results = {
         "scale": [],
-        # "clip": [],
+        "clip": [],
     }
     torch.cuda.empty_cache()
 
@@ -89,7 +89,6 @@ def find_s_and_salient_weights(model, enc, q_config, s_val=None):
                     functools.partial(cache_input_hook, name=name, feat_dict=input_feat)
                 )
             )
-        # inps = inps.to(next(layer.parameters()).device)  # in case multi-gpu
         # get output as next layer's input
         inps = layer(inps, **layer_kwargs)[0]
         for h in handles:
@@ -110,7 +109,7 @@ def find_s_and_salient_weights(model, enc, q_config, s_val=None):
             input_feat=input_feat,
             s_val=s_val
         )
-        # apply_scale(layer, scales_list, input_feat_dict=input_feat)
+
         apply_scale(layers[i], scales_list, input_feat_dict=input_feat)
         # append prefix to make names global
         awq_results["scale"] += append_str_prefix(
@@ -122,22 +121,22 @@ def find_s_and_salient_weights(model, enc, q_config, s_val=None):
         gc.collect()
         torch.cuda.empty_cache()
 
-        # clip_list = auto_clip_block(
-        #     layer,
-        #     w_bit=num_bits,
-        #     q_config=q_config,
-        #     input_feat=input_feat,
-        # )
-        # apply_clip(layer, clip_list)
-        # # append prefix to make names global
-        # awq_results["clip"] += append_str_prefix(
-        #     clip_list, get_op_name(model, layer) + "."
-        # )
+        clip_list = auto_clip_block(
+            layer,
+            w_bit=num_bits,
+            q_config=q_config,
+            input_feat=input_feat,
+        )
+        apply_clip(layer, clip_list)
+        # append prefix to make names global
+        awq_results["clip"] += append_str_prefix(
+            clip_list, get_op_name(model, layer) + "."
+        )
 
         layer = layer.cpu()
         del layer
         del input_feat
-        # del clip_list
+        del clip_list
         del named_linears
         gc.collect()
         torch.cuda.empty_cache()

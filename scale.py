@@ -2,7 +2,7 @@ import torch
 from torch import nn
 import gc
 from helpers import get_op_name, get_op_by_name
-from quant import pseudo_quantize_tensor
+from quant import quantize_tensor
 from clip import apply_clip
 
 @torch.no_grad()
@@ -14,15 +14,11 @@ def auto_scale_block(module, module_kwargs, w_bit, q_config, input_feat, s_val=N
     # TODO - complete
     if w_bit is not None:
         def w_quantize_func(p):
-            return pseudo_quantize_tensor(
+            return quantize_tensor(
                 p,
                 n_bit=w_bit,
                 **q_config,
             ).detach()
-
-    else:
-        def w_quantize_func(p):
-            return p
 
     if "use_cache" in module_kwargs:
         module_kwargs.pop("use_cache")
@@ -32,7 +28,7 @@ def auto_scale_block(module, module_kwargs, w_bit, q_config, input_feat, s_val=N
         x = x.to(next(block.parameters()).device)
         if s_val is not None:
             scales = torch.full((x.shape[-1],), 2, dtype=x.dtype, device=x.device)
-            
+
         with torch.no_grad():
             org_out = block(x, **kwargs)
             if isinstance(org_out, tuple):
@@ -164,9 +160,6 @@ def apply_scale(module, scales_list, input_feat_dict=None):
 
 @torch.no_grad()
 def scale_fc_fc(fc1, fc2, scales):
-    # assert isinstance(fc1, nn.Linear)
-    # assert isinstance(fc2, nn.Linear)
-    # assert fc1.out_features == fc2.in_features
 
     scales = scales.to(fc1.weight.device)
     fc1.weight[-scales.size(0) :].div_(scales.view(-1, 1))
@@ -174,11 +167,6 @@ def scale_fc_fc(fc1, fc2, scales):
         fc1.bias.div_(scales.view(-1))
 
     fc2.weight.mul_(scales.view(1, -1))
-
-    # for p in fc1.parameters():
-    #     assert torch.isnan(p).sum() == 0
-    # for p in fc2.parameters():
-    #     assert torch.isnan(p).sum() == 0
 
 @torch.no_grad()
 def scale_ln_fcs(ln, fcs, scales):
@@ -194,11 +182,4 @@ def scale_ln_fcs(ln, fcs, scales):
     for fc in fcs:
         fc.weight.mul_(scales.view(1, -1))
 
-    for p in ln.parameters():
-        assert torch.isnan(p).sum() == 0
-    for fc in fcs:
-        for p in fc.parameters():
-            assert torch.isnan(p).sum() == 0
 
-# Feels optional, maybe?
-# def apply_clip(model, clip_list):
