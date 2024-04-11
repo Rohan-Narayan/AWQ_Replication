@@ -8,22 +8,15 @@ from quant import quantize_tensor
 # weight quantization
 @torch.no_grad()
 def auto_clip_layer(
-    w, input_feat, n_bit, q_config, n_grid=20, max_shrink=0.5, n_sample_token=512
+    w, input_feat, num_bits, group_size, n_grid=20, max_shrink=0.5, n_sample_token=512
 ):
-    assert w.dim() == 2
-    org_w_shape = w.shape
-    # w           [co, ci]      -> [co, 1, n_group, group size]
-    # input_feat  [n_token, ci] -> [1, n_token, n_group, group size]
-    group_size = (
-        q_config["q_group_size"] if q_config["q_group_size"] > 0 else w.shape[1]
-    )
+  
     input_feat = input_feat.view(-1, input_feat.shape[-1])
     input_feat = input_feat.reshape(1, input_feat.shape[0], -1, group_size)
     input_feat = input_feat[:, 0 :: input_feat.shape[1] // n_sample_token]
     w = w.reshape(w.shape[0], 1, -1, group_size)
 
-    oc_batch_size = 256 if w.shape[0] % 256 == 0 else 64  # prevent OOM
-    assert w.shape[0] % oc_batch_size == 0
+    oc_batch_size = 256 if w.shape[0] % 256 == 0 else 64
     w_all = w
     best_max_val_all = []
 
@@ -35,16 +28,15 @@ def auto_clip_layer(
         best_max_val = org_max_val.clone()
         min_errs = torch.ones_like(org_max_val) * 1e9
         input_feat = input_feat.to(w.device)
-        org_out = (input_feat * w).sum(dim=-1)  # co, n_token, n_group
+        org_out = (input_feat * w).sum(dim=-1)
 
         for i_s in range(int(max_shrink * n_grid)):
             max_val = org_max_val * (1 - i_s / n_grid)
             min_val = -max_val
             cur_w = torch.clamp(w, min_val, max_val)
-            q_w = quantize_tensor(cur_w, n_bit=n_bit, **q_config)
+            q_w = quantize_tensor(cur_w, num_bits=num_bits, group_size=group_size)
             cur_out = (input_feat * q_w).sum(dim=-1)
 
-            # co, 1, n_group, 1
             err = (cur_out - org_out).pow(2).mean(dim=1).view(min_errs.shape)
             del cur_w
             del cur_out
@@ -63,7 +55,7 @@ def auto_clip_layer(
 
 
 @torch.no_grad()
-def auto_clip_block(module, w_bit, q_config, input_feat):
+def auto_clip_block(module, num_bits, group_size, input_feat):
     named_linears = {
         name: m for name, m in module.named_modules() if isinstance(m, nn.Linear)
     }
@@ -75,7 +67,7 @@ def auto_clip_block(module, w_bit, q_config, input_feat):
             continue
         named_linears[name].cuda()
         max_val = auto_clip_layer(
-            named_linears[name].weight, input_feat[name], n_bit=w_bit, q_config=q_config
+            named_linears[name].weight, input_feat[name], num_bits=num_bits, group_size=group_size
         )
         clip_list.append((name, max_val))
         named_linears[name].cpu()

@@ -10,44 +10,46 @@ def get_act_scale(x):
     return x.abs().view(-1, x.shape[-1]).mean(0)
 
 @torch.no_grad()
-def auto_scale_block(module, module_kwargs, w_bit, q_config, input_feat, s_val=None):
+def auto_scale_block(module, module_kwargs, num_bits, group_size, input_feat, s_val=None):
     # TODO - complete
-    if w_bit is not None:
-        
-        def w_quantize_func(p):
-            return quantize_tensor(
-                p,
-                n_bit=w_bit,
-                **q_config,
-            ).detach()
+
+    def w_quantize_func(p):
+        return quantize_tensor(
+            p,
+            num_bits=num_bits,
+            group_size=group_size,
+        ).detach()
 
     if "use_cache" in module_kwargs:
         module_kwargs.pop("use_cache")
 
-    def _search_module_scale(block, linears2scale: list, x, kwargs={}, s_val=None):
+    def optimal_scales(block, linears2scale: list, x, kwargs={}, s_val=None):
         # TODO - complete
         x = x.to(next(block.parameters()).device)
+
+        # If fixed s_val, no need to search for it
         if s_val is not None:
             scales = torch.full((x.shape[-1],), 2, dtype=x.dtype, device=x.device)
+            return scales.view(-1).detach()
 
         with torch.no_grad():
             org_out = block(x, **kwargs)
             if isinstance(org_out, tuple):
                 org_out = org_out[0]
 
+        # Gets average activations across calibration set
         x_max = get_act_scale(x)
 
         best_error = float("inf")
-        best_ratio = -1
         best_scales = None
 
+        # Grid search from 0 to 1 in intervals of 1 / n_grid
         n_grid = 20
-        history = []
 
-        org_sd = {k: v.cpu() for k, v in block.state_dict().items()}
-        for ratio in range(n_grid):
-            ratio = ratio * 1 / n_grid
-            scales = x_max.pow(ratio).clamp(min=1e-4).view(-1)
+        original_state = {k: v.cpu() for k, v in block.state_dict().items()}
+        for alpha in range(n_grid):
+            alpha = alpha * 1 / n_grid
+            scales = x_max.pow(alpha).clamp(min=1e-4).view(-1)
             scales = scales / (scales.max() * scales.min()).sqrt()
             for fc in linears2scale:
                 fc.weight.mul_(scales.view(1, -1).to(fc.weight.device))
@@ -58,31 +60,24 @@ def auto_scale_block(module, module_kwargs, w_bit, q_config, input_feat, s_val=N
 
             loss = (
                 (org_out - out).float().pow(2).mean().item()
-            )  # float prevents overflow
-            history.append(loss)
+            ) 
+
+            # Find scales that lead to lowest loss
             is_best = loss < best_error
             if is_best:
                 best_error = loss
-                best_ratio = ratio
                 best_scales = scales
-            block.load_state_dict(org_sd)
-        if best_ratio == -1:
-            print(history)
-            raise Exception
-        # print(best_ratio)
-        best_scales = best_scales.view(-1)
+            
+            # Restore block for next iteration
+            block.load_state_dict(original_state)
 
-        assert torch.isnan(best_scales).sum() == 0, best_scales
+        best_scales = best_scales.view(-1)
         return best_scales.detach()
 
-    def _auto_get_scale(prev_op, layers, inp, module2inspect=None, kwargs={}, s_val=None):
+    def get_scales(prev_op, layers, inp, inspect_module, kwargs={}, s_val=None):
         # TODO - complete
-        if module2inspect is None:
-            # assert len(layers) == 1
-            module2inspect = layers[0]
-        scales = _search_module_scale(module2inspect, layers, inp, kwargs, s_val)
+        scales = optimal_scales(inspect_module, layers, inp, kwargs, s_val)
         scales = scales.detach().cpu()
-        # prev_op_name, [layer_name], scale
         return (
             get_op_name(module, prev_op),
             tuple([get_op_name(module, m) for m in layers]),
@@ -92,41 +87,44 @@ def auto_scale_block(module, module_kwargs, w_bit, q_config, input_feat, s_val=N
     scales_list = []
 
     scales_list.append(
-            _auto_get_scale(
-                prev_op=module.self_attn_layer_norm,
-                layers=[
-                    module.self_attn.q_proj,
-                    module.self_attn.k_proj,
-                    module.self_attn.v_proj,
-                ],
-                inp=input_feat["self_attn.q_proj"],
-                module2inspect=module.self_attn,
-                kwargs=module_kwargs,
-                s_val=s_val
-            )
+        get_scales(
+            prev_op=module.self_attn_layer_norm,
+            layers=[
+                module.self_attn.q_proj,
+                module.self_attn.k_proj,
+                module.self_attn.v_proj,
+            ],
+            inp=input_feat["self_attn.q_proj"],
+            inspect_module=module.self_attn,
+            kwargs=module_kwargs,
+            s_val=s_val
         )
-        # attn out
+    )
     scales_list.append(
-        _auto_get_scale(
+        get_scales(
             prev_op=module.self_attn.v_proj,
             layers=[module.self_attn.out_proj],
             inp=input_feat["self_attn.out_proj"],
+            inspect_module=module.self_attn.out_proj,
+            s_val=s_val
         )
     )
-    # fc1
     scales_list.append(
-        _auto_get_scale(
+        get_scales(
             prev_op=module.final_layer_norm,
             layers=[module.fc1],
             inp=input_feat["fc1"],
+            inspect_module=module.fc1,
+            s_val=s_val
         )
     )
-    # fc2
     scales_list.append(
-        _auto_get_scale(
+        get_scales(
             prev_op=module.fc1,
             layers=[module.fc2],
             inp=input_feat["fc2"],
+            inspect_module=module.fc2,
+            s_val=s_val
         )
     )   
     
@@ -149,7 +147,6 @@ def apply_scale(module, scales_list, input_feat_dict=None):
             layer.cuda()
         scales.cuda()
         if isinstance(prev_op, nn.Linear):
-            assert len(layers) == 1
             scale_fc_fc(prev_op, layers[0], scales)
         elif isinstance(prev_op, nn.LayerNorm):
             scale_ln_fcs(prev_op, layers, scales)

@@ -11,13 +11,10 @@ from clip import auto_clip_block, apply_clip
 
 
 @torch.no_grad()
-def find_s_and_salient_weights(model, enc, q_config, s_val=None):
+def find_s_and_salient_weights(model, enc, group_size, s_val=None):
     num_bits = 3
     n_samples = 128
     seqlen = 512
-    # if "bigcode" in str(model.__class__).lower():
-    #     # otherwise attention_mask will always be on cpu.
-    #     model.transformer.bias = model.transformer.bias.to("cuda")
 
     layers = get_blocks(model)
 
@@ -33,9 +30,7 @@ def find_s_and_salient_weights(model, enc, q_config, s_val=None):
     layers[0] = layers[0].cuda()
     move_device(model, "cuda")
 
-    # get input and kwargs to layer 0
-    # with_kwargs is only supported in PyTorch 2.0
-    # use this Catcher hack for now
+    # Hack to get input and kwargs - taken from official AWQ Repo
     class Catcher(nn.Module):
         def __init__(self, module):
             super().__init__()
@@ -44,16 +39,18 @@ def find_s_and_salient_weights(model, enc, q_config, s_val=None):
         def forward(self, inp, **kwargs):
             inps.append(inp)
             layer_kwargs.update(kwargs)
-            raise ValueError  # early exit to break later inference
+            raise ValueError 
 
-    # patch layer 0 to catch input and kwargs
     layers[0] = Catcher(layers[0])
     try:
         model(samples.to(next(model.parameters()).device))
-    except ValueError:  # work with early exit
+    except ValueError:
         pass
+
+    # Can get rid of sample - just need activations in model
     del samples
-    layers[0] = layers[0].module  # restore
+
+    layers[0] = layers[0].module
     inps = inps[0]
 
     layers[0] = layers[0].cpu()
@@ -61,21 +58,20 @@ def find_s_and_salient_weights(model, enc, q_config, s_val=None):
 
     gc.collect()
 
-    awq_results = {
+    s_and_salient_weights = {
         "scale": [],
         "clip": [],
     }
     torch.cuda.empty_cache()
 
-    # solve layer by layer
     for i in tqdm(range(len(layers)), desc="Running AWQ..."):
+        # Clear GPU Memory
         gc.collect()
         torch.cuda.empty_cache()
         layer = layers[i]
         layer = layer.cuda()
         named_linears = get_named_linears(layer)
 
-        # firstly, get input features of all linear layers
         def cache_input_hook(m, x, y, name, feat_dict):
             x = x[0]
             x = x.detach().cpu()
@@ -89,12 +85,11 @@ def find_s_and_salient_weights(model, enc, q_config, s_val=None):
                     functools.partial(cache_input_hook, name=name, feat_dict=input_feat)
                 )
             )
-        # get output as next layer's input
         inps = layer(inps, **layer_kwargs)[0]
         for h in handles:
             h.remove()
         del handles
-        # now solve for scaling and clipping
+
         input_feat = {k: torch.cat(v, dim=0) for k, v in input_feat.items()}
 
         # Clear GPU memory
@@ -104,15 +99,15 @@ def find_s_and_salient_weights(model, enc, q_config, s_val=None):
         scales_list = auto_scale_block(
             layer,
             layer_kwargs,
-            w_bit=num_bits,
-            q_config=q_config,
+            num_bits=num_bits,
+            group_size=group_size,
             input_feat=input_feat,
             s_val=s_val
         )
 
         apply_scale(layers[i], scales_list, input_feat_dict=input_feat)
-        # append prefix to make names global
-        awq_results["scale"] += append_str_prefix(
+
+        s_and_salient_weights["scale"] += append_str_prefix(
             scales_list, get_op_name(model, layer) + "."
         )
 
@@ -121,19 +116,23 @@ def find_s_and_salient_weights(model, enc, q_config, s_val=None):
         gc.collect()
         torch.cuda.empty_cache()
 
+        # Apply weight clipping to reduce MSE
+        # Reduces quantization error in delta
         clip_list = auto_clip_block(
             layer,
-            w_bit=num_bits,
-            q_config=q_config,
+            num_bits=num_bits,
+            group_size=group_size,
             input_feat=input_feat,
         )
         apply_clip(layer, clip_list)
-        # append prefix to make names global
-        awq_results["clip"] += append_str_prefix(
+
+        s_and_salient_weights["clip"] += append_str_prefix(
             clip_list, get_op_name(model, layer) + "."
         )
 
         layer = layer.cpu()
+
+        # Clear GPU Memory
         del layer
         del input_feat
         del clip_list
@@ -141,4 +140,4 @@ def find_s_and_salient_weights(model, enc, q_config, s_val=None):
         gc.collect()
         torch.cuda.empty_cache()
 
-    return awq_results
+    return s_and_salient_weights
