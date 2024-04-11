@@ -25,4 +25,6 @@ is required. The results for opt-1.3b to opt-6.7b were run on an L4 GPU on Googl
 https://colab.research.google.com/drive/12Gwv-0alJc_rCNdIOETjZApCakYSkWOk?usp=sharing \
 The results can be seen under the header "Run Files".
 
+## Next Steps
+In the original paper, the authors do claim that opt-30b can "AWQ-ized" on a single A100 GPU. However, I was unable to replicate this. It's possible they used an 80GB RAM A100, while the Colab A100 only has 40GB. Regardless, it would be interesting to explore memory savings to achieve an AWQ form of opt-30b.
 
