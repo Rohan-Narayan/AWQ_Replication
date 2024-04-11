@@ -17,17 +17,17 @@ args = parser.parse_args()
 if args.test:
     models = ["opt-125m"]
 else:
-    models = ["opt-1.3b", "opt-2.7b", "opt-6.7b", "opt-13b"]
-    # Exceeds A100 GPU RAM when scaling and quantizing
+    models = ["opt-1.3b", "opt-2.7b", "opt-6.7b"]
+
+    # Exceeds L4 GPU RAM when scaling and quantizing
+    # models.append("opt-13b")
+    # Exceeds A100 GPU RAM and L4 GPU RAM when scaling and quantizing
     # models.append("opt-30b")
 
-q_config = {
-            "zero_point": True,
-            "q_group_size": 128, 
-        }
+group_size = 128
 kwargs = {"torch_dtype": torch.float16, "low_cpu_mem_usage": True}
 num_bits = 3
-s_val = args.number
+s_val = args.s_val
 
 if __name__ == "__main__":
     testset = load_dataset("wikitext", "wikitext-2-raw-v1", split="test")
@@ -50,7 +50,7 @@ if __name__ == "__main__":
 
         s_and_salient_weights = find_s_and_salient_weights(model,
                         enc,
-                        q_config=q_config,
+                        group_size=group_size,
                         s_val=s_val)
 
         # Reset model
@@ -60,9 +60,11 @@ if __name__ == "__main__":
         model.eval()
 
         apply_awq_scaling(model, s_and_salient_weights)
-        quantize(model, num_bits=num_bits, q_config=q_config)
-
-        torch.save(model, model_name + "_awq.pt")
+        quantize(model, num_bits=num_bits, group_size=group_size)
+        if args.s_val is not None:
+            torch.save(model, model_name + '_s2.pt')
+        else:
+            torch.save(model, model_name + "_awq.pt")
 
         testenc = enc("\n\n".join(testset["text"]), return_tensors="pt")
 
